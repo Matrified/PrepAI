@@ -1,5 +1,8 @@
 # PrepAI
 
+<img width="2551" height="1283" alt="Screenshot 2026-07-16 233821" src="https://github.com/user-attachments/assets/9302ad22-8aaa-47b1-82d5-3e48bddb58be" />
+
+
 PrepAI is an AI-powered mock interview platform for software engineers. Pick a topic, difficulty, and question format, then run a timed practice session with instant grading and feedback powered by Google's Gemini API.
 
 ## Features
