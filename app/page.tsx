@@ -13,58 +13,75 @@ const topics = [
 
 const difficulties = ["Junior", "Mid", "Senior"];
 
+const questionTypes = [
+  { id: "mcq", title: "MCQ", description: "Instant correctness and short explanations." },
+  { id: "short-answer", title: "Short Answer", description: "Concise, written response questions." },
+  { id: "design", title: "System Design", description: "Architecture and trade-off scenarios." },
+  { id: "debugging", title: "Debugging", description: "Problem-solving and bug-fix questions." },
+  { id: "open-ended", title: "Open Ended", description: "Thoughtful conceptual responses." },
+];
+
 export default function Home() {
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("Junior");
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(["mcq", "short-answer", "design"]);
   const router = useRouter();
+
+  const toggleType = (typeId: string) => {
+    setSelectedTypes((current) =>
+      current.includes(typeId) ? current.filter((item) => item !== typeId) : [...current, typeId]
+    );
+  };
 
   const handleStart = () => {
     if (!selectedTopic) return;
-    router.push(`/quiz?topic=${selectedTopic}&difficulty=${selectedDifficulty}`);
+    const typeQuery = selectedTypes.length ? `&types=${selectedTypes.join(",")}` : "";
+    router.push(`/quiz?topic=${selectedTopic}&difficulty=${selectedDifficulty}${typeQuery}`);
   };
 
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-slate-100">
-      <div className="absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.25),_transparent_45%)] pointer-events-none" />
-      <div className="relative mx-auto max-w-6xl px-6 py-16">
-        <div className="grid gap-12 lg:grid-cols-[1.3fr_0.9fr] items-center">
+      <div className="absolute inset-x-0 top-0 h-80 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.24),_transparent_38%)] pointer-events-none" />
+      <div className="relative mx-auto max-w-7xl px-6 py-16">
+        <div className="grid gap-12 lg:grid-cols-[1.5fr_0.9fr] items-start">
           <section className="space-y-8">
-            <div className="space-y-4">
-              <p className="inline-flex rounded-full bg-cyan-500/20 px-4 py-1 text-sm font-semibold text-cyan-200 ring-1 ring-cyan-500/20">
-                AI Interview Simulator • Timed practice • Feedback scoring
-              </p>
-              <h1 className="text-5xl font-semibold tracking-tight text-white sm:text-6xl">
-                Master interviews with smart simulation and AI grading.
+            <div className="space-y-5">
+              <div className="inline-flex items-center gap-3 rounded-full bg-cyan-500/15 px-5 py-2 text-sm font-semibold text-cyan-200 ring-1 ring-cyan-500/20">
+                <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                AI Interview Simulator • Mixed question formats • Fast feedback
+              </div>
+              <h1 className="max-w-3xl text-5xl font-semibold tracking-tight text-white sm:text-6xl">
+                Practice smarter with a polished, creative interview experience.
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-slate-300">
-                Realistic, professional interview practice with timed questions, answer type guidance, and AI-powered scoring—designed so every session feels like a real interview.
+                Choose your topic, pick the formats you want, and launch a session built for speed, clarity, and instant insight.
               </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_20px_120px_-40px_rgba(14,165,233,0.35)]">
                 <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Focus</p>
-                <p className="mt-3 text-xl font-semibold text-white">Custom topic selection</p>
-                <p className="mt-2 text-sm text-slate-300">Practice frontend, backend, system design, DSA or full-stack scenarios.</p>
+                <p className="mt-3 text-xl font-semibold text-white">Flexible question mix</p>
+                <p className="mt-2 text-sm text-slate-300">Run MCQ, short answer, design, debugging, and open-ended prompts together.</p>
               </div>
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-                <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Experience</p>
-                <p className="mt-3 text-xl font-semibold text-white">Timed simulation</p>
-                <p className="mt-2 text-sm text-slate-300">Build pressure-handling skills with a visible countdown and polished flow.</p>
+                <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Style</p>
+                <p className="mt-3 text-xl font-semibold text-white">Modern UI</p>
+                <p className="mt-2 text-sm text-slate-300">Eye-catching gradients, polished cards, and responsive layout.</p>
               </div>
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
                 <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Outcome</p>
-                <p className="mt-3 text-xl font-semibold text-white">AI grading</p>
-                <p className="mt-2 text-sm text-slate-300">Receive feedback, strengths, and improvement guidance after every answer.</p>
+                <p className="mt-3 text-xl font-semibold text-white">Smarter pacing</p>
+                <p className="mt-2 text-sm text-slate-300">Answer flow minimizes waiting and grades open responses at the end.</p>
               </div>
             </div>
           </section>
 
-          <section className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+          <section className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-8 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
             <div className="space-y-6">
               <div>
-                <h2 className="text-3xl font-bold text-white">Ready for your next session?</h2>
-                <p className="mt-2 text-slate-300">Pick a topic, set your level, and get interview-ready.</p>
+                <h2 className="text-3xl font-bold text-white">Create your session</h2>
+                <p className="mt-2 text-slate-300">Mix question styles and get the exact practice you want.</p>
               </div>
 
               <div className="space-y-6">
@@ -105,6 +122,27 @@ export default function Home() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300">Question types</h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {questionTypes.map((type) => (
+                      <button
+                        key={type.id}
+                        onClick={() => toggleType(type.id)}
+                        className={`rounded-3xl border px-4 py-4 text-left transition ${
+                          selectedTypes.includes(type.id)
+                            ? "border-cyan-400 bg-cyan-500/10 text-white"
+                            : "border-white/10 bg-slate-950/80 text-slate-300 hover:border-slate-200"
+                        }`}
+                      >
+                        <p className="font-semibold">{type.title}</p>
+                        <p className="mt-1 text-xs text-slate-400">{type.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-sm text-slate-400">Select one or more formats. Open ended questions are graded after the complete session for smoother flow.</p>
                 </div>
 
                 <button

@@ -1,36 +1,63 @@
 ﻿import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
+interface GradeRequest {
+  question: string;
+  modelAnswer: string;
+  keyPoints: string[];
+  userAnswer: string;
+  answerType?: string;
+  questionType?: string;
+  index?: number;
+}
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: "API key not configured" }, { status: 500 });
   }
 
-  const { question, modelAnswer, keyPoints, userAnswer, answerType } = await request.json();
+  const body = await request.json();
+  const requests = (Array.isArray(body.requests) ? body.requests : [body]) as GradeRequest[];
 
-  if (!question || !modelAnswer || !keyPoints || userAnswer === undefined) {
+  if (!requests.length) {
+    return NextResponse.json({ error: "Missing grading payload" }, { status: 400 });
+  }
+
+  const missing = requests.some(
+    (item) => !item.question || !item.modelAnswer || !item.keyPoints || item.userAnswer === undefined
+  );
+  if (missing) {
     return NextResponse.json({ error: "Missing grading payload" }, { status: 400 });
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = `You are an expert technical interviewer grader. Compare the candidate's answer to the model answer, the key points, and the answer type.
+  const prompt = `You are an expert technical interviewer grader. Grade each item below and return ONLY valid JSON as an array of objects.
 
-Return only valid JSON with the following fields:
-{
-  "score": number,
-  "feedback": string,
-  "strengths": string[],
-  "improvements": string[]
-}
+Use this output format:
+[
+  {
+    "index": 0,
+    "score": number,
+    "feedback": "...",
+    "strengths": ["..."],
+    "improvements": ["..."]
+  }
+]
 
-Question: "${question.replace(/"/g, '\\"')}"
-Answer type: "${answerType.replace(/"/g, '\\"')}"
-Model answer: "${modelAnswer.replace(/"/g, '\\"')}"
-Key points: ${JSON.stringify(keyPoints)}
-Candidate answer: "${userAnswer.replace(/"/g, '\\"')}"
+Keep the JSON valid and do not include markdown fences.
 
-Evaluate clarity, relevance, completeness, and structure. Base the score on how well the response matches the model answer and addresses the key points. Keep feedback concise and actionable.`;
+${requests
+    .map(
+      (item, index) =>
+        `Question ${index + 1}: "${item.question.replace(/"/g, '\"')}"
+Answer type: "${(item.answerType ?? "").replace(/"/g, '\"')}"
+Model answer: "${item.modelAnswer.replace(/"/g, '\"')}"
+Key points: ${JSON.stringify(item.keyPoints)}
+Candidate answer: "${(item.userAnswer ?? "").replace(/"/g, '\"')}"
+Index: ${item.index ?? index}`
+    )
+    .join("\n\n")}`;
 
   try {
     const response = await ai.models.generateContent({
@@ -40,10 +67,19 @@ Evaluate clarity, relevance, completeness, and structure. Base the score on how 
 
     const text = response.text ?? "";
     const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const match = cleaned.match(/\{[\s\S]*\}/);
+    const match = cleaned.match(/\[[\s\S]*\]/);
     const jsonText = match ? match[0] : cleaned;
-    const result = JSON.parse(jsonText);
+    const results = JSON.parse(jsonText);
 
+    if (!Array.isArray(results)) {
+      throw new Error("Grading response was not an array.");
+    }
+
+    if (Array.isArray(body.requests)) {
+      return NextResponse.json({ results });
+    }
+
+    const [result] = results;
     return NextResponse.json({
       score: Number(result.score ?? 0),
       feedback: result.feedback ?? "No feedback provided.",

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 interface Question {
@@ -8,8 +8,12 @@ interface Question {
   modelAnswer: string;
   keyPoints: string[];
   answerType: string;
+  questionType: string;
   idealDuration: number;
   promptHints: string;
+  explanation?: string;
+  choices?: string[];
+  correctAnswer?: string;
 }
 
 interface GradeResult {
@@ -32,12 +36,14 @@ function QuizContent() {
   const router = useRouter();
   const topic = searchParams.get("topic") ?? "";
   const difficulty = searchParams.get("difficulty") ?? "";
+  const typesParam = searchParams.get("types") ?? "";
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState<string[]>([]);
   const [grades, setGrades] = useState<(GradeResult | null)[]>([]);
-  const [revealed, setRevealed] = useState(false);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -48,10 +54,16 @@ function QuizContent() {
   useEffect(() => {
     async function fetchQuestions() {
       try {
+        setLoading(true);
+        const types = typesParam
+          .split(",")
+          .map((type) => type.trim())
+          .filter(Boolean);
+
         const res = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic, difficulty }),
+          body: JSON.stringify({ topic, difficulty, types }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to load questions");
@@ -66,7 +78,7 @@ function QuizContent() {
       }
     }
     fetchQuestions();
-  }, [topic, difficulty]);
+  }, [topic, difficulty, typesParam]);
 
   useEffect(() => {
     if (loading || finishedByTimer) return;
@@ -86,6 +98,7 @@ function QuizContent() {
 
   const current = questions[currentIndex];
   const progress = questions.length ? ((currentIndex + 1) / questions.length) * 100 : 0;
+  const isChoiceQuestion = Boolean(current?.choices?.length) || /mcq/i.test(current?.questionType || current?.answerType);
 
   const handleAnswerChange = (value: string) => {
     const updated = [...userAnswers];
@@ -93,65 +106,110 @@ function QuizContent() {
     setUserAnswers(updated);
   };
 
-  const handleGradeAnswer = async () => {
+  const collectOpenAnswerGrades = async (currentGrades: (GradeResult | null)[]) => {
+    const requests = questions
+      .map((question, index) => ({
+        question: question.question,
+        modelAnswer: question.modelAnswer,
+        keyPoints: question.keyPoints,
+        userAnswer: userAnswers[index] ?? "",
+        answerType: question.answerType,
+        questionType: question.questionType,
+        index,
+      }))
+      .filter((item) => !item.questionType || !/mcq/i.test(item.questionType));
+
+    if (!requests.length) {
+      return currentGrades;
+    }
+
+    const res = await fetch("/api/grade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requests }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to grade session answers.");
+    }
+
+    const resultGrades = [...currentGrades];
+    data.results.forEach((result: any) => {
+      resultGrades[result.index] = {
+        score: Number(result.score ?? 0),
+        feedback: result.feedback ?? "No feedback provided.",
+        strengths: Array.isArray(result.strengths) ? result.strengths : [],
+        improvements: Array.isArray(result.improvements) ? result.improvements : [],
+      };
+    });
+
+    return resultGrades;
+  };
+
+  const handleSubmitAnswer = async () => {
     if (!current) return;
     setGradeError("");
     setSubmitting(true);
 
     try {
-      const res = await fetch("/api/grade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: current.question,
-          modelAnswer: current.modelAnswer,
-          keyPoints: current.keyPoints,
-          userAnswer: userAnswers[currentIndex] ?? "",
-          answerType: current.answerType,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Unable to grade answer.");
-
-      const updatedGrades = [...grades];
-      updatedGrades[currentIndex] = {
-        score: data.score,
-        feedback: data.feedback,
-        strengths: data.strengths ?? [],
-        improvements: data.improvements ?? [],
-      };
-      setGrades(updatedGrades);
-      setRevealed(true);
+      if (isChoiceQuestion) {
+        const selected = userAnswers[currentIndex] ?? "";
+        const correct = current.correctAnswer?.trim() === selected.trim();
+        const grade: GradeResult = {
+          score: correct ? 100 : 0,
+          feedback: correct ? "Correct choice — great job." : `The correct answer is "${current.correctAnswer}".`,
+          strengths: correct ? ["You selected the right option."] : ["You selected an answer; review the explanation below."],
+          improvements: correct ? ["Keep applying this understanding to similar prompts."] : ["Review the key points and try again later."],
+        };
+        const updated = [...grades];
+        updated[currentIndex] = grade;
+        setGrades(updated);
+        setFeedbackMessage(current.explanation ?? (correct ? "Great job." : "Review the explanation below."));
+      } else {
+        setFeedbackMessage(current.explanation ?? "Your response is saved. It will be graded after the session.");
+      }
+      setFeedbackVisible(true);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to grade answer.";
+      const message = err instanceof Error ? err.message : "Something went wrong.";
       setGradeError(message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const finishSession = () => {
-    const session = {
-      topic,
-      difficulty,
-      date: new Date().toISOString(),
-      questions,
-      userAnswers,
-      grades,
-      totalSeconds: TOTAL_TIME_SECONDS - timer,
-      finishedByTimer,
-    };
-    localStorage.setItem("prepai-current-session", JSON.stringify(session));
-    router.push("/results");
+  const finishSession = async () => {
+    setSubmitting(true);
+    setGradeError("");
+    try {
+      const finalGrades = await collectOpenAnswerGrades(grades);
+      const session = {
+        topic,
+        difficulty,
+        date: new Date().toISOString(),
+        questions,
+        userAnswers,
+        grades: finalGrades,
+        totalSeconds: TOTAL_TIME_SECONDS - timer,
+        finishedByTimer,
+      };
+      localStorage.setItem("prepai-current-session", JSON.stringify(session));
+      router.push("/results");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to complete session.";
+      setGradeError(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleNext = () => {
-    setRevealed(false);
-    setGradeError("");
+  const handleNext = async () => {
+    setFeedbackVisible(false);
+    setFeedbackMessage("");
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(currentIndex + 1);
     } else {
-      finishSession();
+      await finishSession();
     }
   };
 
@@ -184,17 +242,16 @@ function QuizContent() {
     );
   }
 
-  const currentGrade = grades[currentIndex];
   const remainingMinutes = Math.ceil(timer / 60);
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-5xl px-4 py-10">
+      <div className="mx-auto max-w-6xl px-4 py-10">
         <div className="mb-8 flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl shadow-cyan-500/10 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.2em] text-cyan-300">Live simulation</p>
             <h1 className="mt-2 text-3xl font-semibold text-white">Interview Practice Session</h1>
-            <p className="mt-2 text-slate-300">Answer each question with confidence and get AI-graded feedback instantly.</p>
+            <p className="mt-2 text-slate-300">Answer each question and get crisp feedback designed for performance improvement.</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-3xl bg-slate-950/70 p-4 text-center ring-1 ring-white/10">
@@ -229,21 +286,39 @@ function QuizContent() {
           <section className="space-y-6 rounded-[2rem] border border-white/10 bg-slate-950/80 p-8 shadow-xl shadow-slate-950/40">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
-                <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-cyan-200">{current.answerType}</span>
+                <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-cyan-200">{current.questionType || current.answerType}</span>
                 <span className="px-2">•</span>
-                <span>For best results, answer with {current.promptHints.toLowerCase()}</span>
+                <span>Answer using {current.promptHints.toLowerCase()}</span>
               </div>
               <h2 className="text-2xl font-semibold text-white">{current.question}</h2>
             </div>
 
-            <textarea
-              value={userAnswers[currentIndex]}
-              onChange={(e) => handleAnswerChange(e.target.value)}
-              placeholder="Compose your response here..."
-              rows={10}
-              disabled={finishedByTimer}
-              className="w-full rounded-3xl border border-white/10 bg-slate-950/90 p-5 text-slate-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
-            />
+            {current.choices && current.choices.length > 0 ? (
+              <div className="grid gap-3">
+                {current.choices.map((choice) => (
+                  <button
+                    key={choice}
+                    onClick={() => handleAnswerChange(choice)}
+                    className={`rounded-3xl border p-5 text-left transition ${
+                      userAnswers[currentIndex] === choice
+                        ? "border-cyan-400 bg-cyan-500/10 text-white"
+                        : "border-white/10 bg-slate-950/90 text-slate-200 hover:border-slate-200"
+                    }`}
+                  >
+                    <span className="block text-base font-semibold">{choice}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <textarea
+                value={userAnswers[currentIndex]}
+                onChange={(e) => handleAnswerChange(e.target.value)}
+                placeholder="Compose your response here..."
+                rows={10}
+                disabled={finishedByTimer}
+                className="w-full rounded-3xl border border-white/10 bg-slate-950/90 p-5 text-slate-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
+              />
+            )}
 
             {finishedByTimer && (
               <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-200">
@@ -257,81 +332,82 @@ function QuizContent() {
               </div>
             )}
 
+            {feedbackVisible && (
+              <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-slate-100">
+                <p className="font-semibold text-white">
+                  {isChoiceQuestion
+                    ? current.correctAnswer?.trim() === userAnswers[currentIndex]?.trim()
+                      ? "Correct!"
+                      : "Try the next one."
+                    : "Answer saved."}
+                </p>
+                <p className="mt-3 text-slate-300">{feedbackMessage}</p>
+              </div>
+            )}
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
-                onClick={handleGradeAnswer}
-                disabled={submitting || finishedByTimer}
-                className="rounded-3xl bg-cyan-500 px-6 py-3 text-base font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+                onClick={handleSubmitAnswer}
+                disabled={submitting || !userAnswers[currentIndex] || feedbackVisible}
+                className="w-full rounded-3xl bg-cyan-500 px-6 py-4 text-lg font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
               >
-                {submitting ? "Grading answer…" : "Grade my answer"}
+                {isChoiceQuestion ? "Submit answer" : "Save answer"}
               </button>
-              <div className="space-y-1 text-right text-sm text-slate-400 sm:text-left">
-                <p className="font-medium text-slate-200">Answer hints</p>
-                <p>Answer fully, then grade it to see AI guidance before moving on.</p>
-              </div>
-            </div>
-
-            {finishedByTimer && !revealed && (
-              <div className="mt-4 rounded-3xl border border-white/10 bg-slate-950/90 p-4 text-sm text-slate-300">
-                <p className="font-semibold text-white">Session ended due to the timer.</p>
-                <p className="mt-2">Your current progress is saved for review. Finish to see the summary.</p>
+              <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={finishSession}
-                  className="mt-4 inline-flex rounded-3xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+                  onClick={() => currentIndex > 0 && setCurrentIndex(currentIndex - 1)}
+                  disabled={currentIndex === 0}
+                  className="rounded-3xl border border-white/10 bg-slate-950/80 px-5 py-4 text-sm text-slate-300 transition hover:border-slate-200 disabled:opacity-50"
                 >
-                  Finish session
+                  Previous
                 </button>
-              </div>
-            )}
-          </section>
-
-          <aside className="space-y-6 rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-xl shadow-slate-950/10">
-            <div className="rounded-3xl bg-slate-950/80 p-5 ring-1 ring-white/10">
-              <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Session Brief</p>
-              <p className="mt-4 text-sm text-slate-300">
-                {questions.length} questions, AI scoring and review built for fast, realistic practice.
-              </p>
-            </div>
-
-            <div className="space-y-4 rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-              <div className="flex items-center justify-between text-sm text-slate-400">
-                <span>Current question</span>
-                <span>{currentIndex + 1}/{questions.length}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm text-slate-400">
-                <span>Model answer length</span>
-                <span>{Math.max(3, current.modelAnswer.split(" ").length)} words</span>
-              </div>
-              <div className="flex items-center justify-between text-sm text-slate-400">
-                <span>Key points to target</span>
-                <span>{current.keyPoints.length}</span>
-              </div>
-            </div>
-
-            {revealed && currentGrade && (
-              <div className="space-y-4 rounded-3xl border border-cyan-500/20 bg-cyan-500/10 p-5">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm uppercase tracking-[0.2em] text-cyan-300">AI Score</p>
-                  <span className="rounded-full bg-slate-950/90 px-3 py-1 text-sm font-semibold text-white">{currentGrade.score}/100</span>
-                </div>
-                <p className="text-sm text-slate-200">{currentGrade.feedback}</p>
                 <button
                   onClick={handleNext}
-                  className="w-full rounded-3xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-200"
+                  disabled={!feedbackVisible}
+                  className="rounded-3xl bg-white/5 px-5 py-4 text-sm font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {currentIndex < questions.length - 1 ? "Next Question" : "Finish Session"}
+                  {currentIndex < questions.length - 1 ? "Next question" : "Finish session"}
                 </button>
               </div>
-            )}
+            </div>
+          </section>
 
-            {!revealed && (
-              <div className="space-y-3 rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-                <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Tip</p>
-                <p className="text-sm text-slate-300">
-                  If you want the strongest results, answer fully then grade it before moving on. The AI compares relevance, coverage, and structure.
-                </p>
+          <aside className="space-y-6 rounded-[2rem] border border-white/10 bg-slate-950/80 p-6 shadow-xl shadow-slate-950/40">
+            <div className="rounded-3xl bg-slate-900/90 p-5 ring-1 ring-white/10">
+              <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Question insights</p>
+              <div className="mt-4 grid gap-3 text-sm text-slate-300">
+                <div className="rounded-3xl bg-slate-950/80 p-4">
+                  <p className="text-slate-400">Type</p>
+                  <p className="mt-2 text-white">{current.questionType || current.answerType}</p>
+                </div>
+                <div className="rounded-3xl bg-slate-950/80 p-4">
+                  <p className="text-slate-400">Current answer</p>
+                  <p className="mt-2 text-white truncate">{userAnswers[currentIndex] || "No answer yet"}</p>
+                </div>
+                <div className="rounded-3xl bg-slate-950/80 p-4">
+                  <p className="text-slate-400">Progress</p>
+                  <p className="mt-2 text-white">{currentIndex + 1}/{questions.length}</p>
+                </div>
               </div>
-            )}
+            </div>
+
+            <div className="rounded-3xl border border-cyan-500/10 bg-slate-900/90 p-5">
+              <p className="text-sm uppercase tracking-[0.24em] text-cyan-300">Session summary</p>
+              <div className="mt-4 space-y-3 text-sm text-slate-300">
+                <p>MCQs are scored instantly inside the session.</p>
+                <p>Open-ended responses are graded once after you finish.</p>
+                <p>Every answer reveals a concise explanation before you move on.</p>
+              </div>
+            </div>
+
+            <div className="rounded-3xl bg-gradient-to-br from-cyan-500/10 via-slate-950/80 to-slate-900/80 p-5 text-sm text-slate-200 ring-1 ring-cyan-500/20">
+              <p className="font-semibold text-white">Tips</p>
+              <ul className="mt-3 space-y-2 text-slate-300">
+                <li>• Answer MCQs directly and trust the instant feedback.</li>
+                <li>• For text answers, be structured: context, decision, result.</li>
+                <li>• Review each explanation before continuing.</li>
+              </ul>
+            </div>
           </aside>
         </div>
       </div>
@@ -341,7 +417,7 @@ function QuizContent() {
 
 export default function QuizPage() {
   return (
-    <Suspense fallback={<div className="text-center py-20">Loading...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-slate-950 text-slate-100"><div className="mx-auto max-w-3xl px-4 py-28 text-center"><p className="text-lg text-slate-300">Loading session...</p></div></div>}>
       <QuizContent />
     </Suspense>
   );

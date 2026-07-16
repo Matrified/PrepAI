@@ -7,35 +7,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "API key not configured" }, { status: 500 });
   }
 
-  const { topic, difficulty } = await request.json();
+  const { topic, difficulty, types } = await request.json();
 
   if (!topic || !difficulty) {
     return NextResponse.json({ error: "Topic and difficulty are required" }, { status: 400 });
   }
 
+  const requestedTypes = Array.isArray(types) && types.length > 0
+    ? types
+    : ["mcq", "short-answer", "design", "debugging", "open-ended"];
+
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `You are a technical interviewer. Generate exactly 5 interview questions for a ${difficulty}-level software engineer on the topic of ${topic}.
 
-For each question, provide:
-- A clear, specific technical question
-- A comprehensive model answer
-- 3 key points the candidate should mention
-- The answer type (e.g. concept, design, strategy, debugging)
-- The ideal duration in minutes
-- A short prompt hint describing the best answer style
+Use the following requested question types: ${requestedTypes.join(", ")}.
 
-Return ONLY valid JSON in this exact format, no markdown:
+For each question, return ONLY valid JSON in this exact format, no markdown:
 [
   {
     "question": "...",
     "modelAnswer": "...",
     "keyPoints": ["...", "...", "..."],
     "answerType": "...",
+    "questionType": "...",
     "idealDuration": 2,
-    "promptHints": "..."
+    "promptHints": "...",
+    "explanation": "...",
+    "choices": ["...", "...", "..."],
+    "correctAnswer": "..."
   }
-]`;
+]
+
+- The field questionType must be one of: ${requestedTypes.map((type) => `\"${type}\"`).join(", ")}.
+- If questionType is mcq, include the choices array and correctAnswer.
+- If questionType is not mcq, omit choices and correctAnswer.
+- explanation should be a short answer explanation that helps the candidate understand the right approach.
+- Keep the JSON strictly valid and do not wrap it in markdown code fences.`;
 
   try {
     const response = await ai.models.generateContent({
